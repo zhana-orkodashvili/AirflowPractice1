@@ -11,7 +11,7 @@ from airflow.models import (
     Param,
     Variable,
 )
-
+from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 
 def get_latest_version():
     logging.info('Retrieving the latest BioGRID version...')
@@ -68,20 +68,24 @@ def load_biogrid(version):
     )
 
     if response.status_code == 200:
-        local_file_name = 'biogrid.tab3.zip'
-        with open(local_file_name, 'wb') as f:
-            f.write(response.content)
+        s3_hook = S3Hook(aws_conn_id='aws_conn_id')
+        s3_bucket = Variable.get('s3_bucket_name')
+        s3_key = f'biogrid/biogrid_{version}.zip'
+
+        s3_hook.load_bytes(response.content, key=s3_key, bucket_name=s3_bucket, replace=True)
+        logging.info(f'Biogrid file has been uploaded to S3 at s3://{s3_bucket}/{s3_key}')
     else:
         logging.error("The specified version is not found")
-        raise Exception()
-
-    logging.info('Biogrid file has loaded')
-    logging.info('Starting biogrid processing')
+        raise Exception("Failed to download the specified version.")
 
 
 def ingest_data(version):
-    local_file_name = 'biogrid.tab3.zip'
-    df = pd.read_csv(local_file_name, delimiter='\t', compression='zip', nrows=100)
+    s3_hook = S3Hook(aws_conn_id='aws_conn_id')
+    s3_bucket = Variable.get('s3_bucket_name')
+    s3_key = f'biogrid/biogrid_{version}.zip'
+    s3_url = s3_hook.get_uri(key=s3_key, bucket_name=s3_bucket)
+
+    df = pd.read_csv(s3_url, delimiter='\t', compression='zip', nrows=100)
 
     df = df.rename(
         lambda column_name: column_name.lower().replace(' ', '_').replace('#', '_').strip('_'),
